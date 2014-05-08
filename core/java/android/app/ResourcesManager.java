@@ -193,6 +193,7 @@ public class ResourcesManager {
         //}
 
         AssetManager assets = new AssetManager();
+        assets.setAppName(packageName);
         assets.setThemeSupport(compatInfo.isThemeable);
         if (assets.addAssetPath(resDir) == 0) {
             return null;
@@ -228,6 +229,7 @@ public class ResourcesManager {
 
             if (config.customTheme != null) {
                 attachThemeAssets(assets, config.customTheme);
+                attachCommonAssets(assets, config.customTheme);
                 attachIconAssets(assets, config.customTheme);
             }
         }
@@ -268,17 +270,9 @@ public class ResourcesManager {
      */
     private void setActivityIcons(Resources r) {
         SparseArray<PackageItemInfo> iconResources = new SparseArray<PackageItemInfo>();
-        String pkgName = null;
+        String pkgName = r.getAssets().getAppName();
         PackageInfo pkgInfo = null;
         ApplicationInfo appInfo = null;
-
-        int count = r.getAssets().getBasePackageCount();
-        if (count > 1) {
-            pkgName = r.getAssets().getBasePackageName(1);
-        } else if (count <= 1) {
-            return;
-        }
-
 
         try {
             pkgInfo = getPackageManager().getPackageInfo(pkgName, PackageManager.GET_ACTIVITIES, UserHandle.myUserId());
@@ -358,6 +352,7 @@ public class ResourcesManager {
                         detachThemeAssets(am);
                         if (config.customTheme != null) {
                             attachThemeAssets(am, config.customTheme);
+                            attachCommonAssets(am, config.customTheme);
                             attachIconAssets(am, config.customTheme);
                             setActivityIcons(r);
                         }
@@ -513,15 +508,61 @@ public class ResourcesManager {
         return true;
     }
 
+    /**
+     * Attach the necessary common asset paths. Common assets should be in a different
+     * namespace than the standard 0x7F.
+     *
+     * @param assets
+     * @param theme
+     * @return true if succes, false otherwise
+     */
+    private boolean attachCommonAssets(AssetManager assets, CustomTheme theme) {
+        PackageInfo piTheme = null;
+        try {
+            piTheme = getPackageManager().getPackageInfo(theme.getThemePackageName(), 0,
+                    UserHandle.myUserId());
+        } catch (RemoteException e) {
+        }
+
+        if (piTheme == null || piTheme.applicationInfo == null || piTheme.isLegacyThemeApk) {
+            return false;
+        }
+
+        String themePackageName =
+                ThemeUtils.getCommonPackageName(piTheme.applicationInfo.packageName);
+        if (themePackageName != null && !themePackageName.isEmpty()) {
+            String themePath =  piTheme.applicationInfo.publicSourceDir;
+            String prefixPath = ThemeUtils.COMMON_RES_PATH;
+            String resCachePath = ThemeUtils.getResDir(ThemeUtils.COMMON_RES_TARGET, piTheme);
+            String resTablePath = resCachePath + "/resources.arsc";
+            String resApkPath = resCachePath + "/resources.apk";
+            int cookie = assets.addCommonOverlayPath(themePath, resTablePath, resApkPath,
+                    prefixPath);
+            if (cookie != 0) {
+                assets.setCommonResCookie(cookie);
+                assets.setCommonResPackageName(themePackageName);
+            }
+        }
+
+        return true;
+    }
+
     private void detachThemeAssets(AssetManager assets) {
         String themePackageName = assets.getThemePackageName();
         String iconPackageName = assets.getIconPackageName();
+        String commonResPackageName = assets.getCommonResPackageName();
 
         //Remove Icon pack if it exists
         if (!TextUtils.isEmpty(iconPackageName) && assets.getIconPackCookie() > 0) {
             assets.removeOverlayPath(iconPackageName, assets.getIconPackCookie());
             assets.setIconPackageName(null);
             assets.setIconPackCookie(0);
+        }
+        //Remove common resources if it exists
+        if (!TextUtils.isEmpty(commonResPackageName) && assets.getCommonResCookie() > 0) {
+            assets.removeOverlayPath(commonResPackageName, assets.getCommonResCookie());
+            assets.setCommonResPackageName(null);
+            assets.setCommonResCookie(0);
         }
         final List<Integer> themeCookies = assets.getThemeCookies();
         if (!TextUtils.isEmpty(themePackageName) && !themeCookies.isEmpty()) {
